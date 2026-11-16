@@ -69,8 +69,12 @@ tr:last-child td{border-bottom:none}
 .modal-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
 .modal-title{font-size:16px;font-weight:600}
 .modal-close{background:none;border:none;font-size:20px;cursor:pointer;color:var(--text2)}
-.search-results{max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;background:white}
-.search-item{padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border)}
+.search-results{max-height:340px;overflow-y:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--border);border-radius:6px;background:white;box-shadow:0 4px 14px rgba(0,0,0,.08)}
+.search-item{padding:11px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border)}
+.search-item.added{opacity:.55}
+.search-group{position:sticky;top:0;background:var(--brand-light);color:var(--brand);font-size:11px;font-weight:700;padding:6px 12px;text-transform:uppercase;letter-spacing:.3px}
+.search-box{display:flex;gap:6px}
+.search-box input{flex:1}
 .search-item:last-child{border-bottom:none}
 .search-item:hover{background:var(--bg2)}
 .search-item small{color:var(--text2);display:block;font-size:11px}
@@ -161,7 +165,10 @@ tr:last-child td{border-bottom:none}
     </div>
     <div style="margin-top:16px">
       <label style="font-size:12px;font-weight:500;color:var(--text2);display:block;margin-bottom:6px">Buscar producto</label>
-      <input type="text" id="prod-search" placeholder="Escribe código o nombre del producto..." oninput="searchProducts()" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px" autocomplete="off">
+      <div class="search-box">
+        <input type="text" id="prod-search" placeholder="Toca para ver la lista o escribe código / nombre..." oninput="searchProducts()" onfocus="searchProducts()" onclick="searchProducts()" style="padding:10px;border:1px solid var(--border);border-radius:6px;font-size:16px" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+        <button type="button" class="btn btn-outline" onclick="toggleListaProductos()" title="Ver lista de productos" style="padding:0 14px;font-size:15px">▾</button>
+      </div>
       <div id="search-results" class="search-results" style="display:none;margin-top:4px"></div>
     </div>
     <div class="filters" style="margin-top:10px;align-items:center">
@@ -1038,24 +1045,37 @@ function onSucursalChange() {
 }
 
 function searchProducts() {
-  const q = document.getElementById('prod-search').value.toLowerCase().trim();
+  const q = normTxt(document.getElementById('prod-search').value);
   const res = document.getElementById('search-results');
-  if (q.length < 2) { res.style.display = 'none'; return; }
-  const found = PRODUCTS.filter(p => p.name.toLowerCase().includes(q) || p.code.includes(q)).slice(0, 12);
-  if (!found.length) { res.style.display = 'none'; return; }
-  res.innerHTML = found.map(p =>
-    `<div class="search-item" onclick="addProduct('${p.code}','${p.name.replace(/'/g,"\\'")}','${p.canal}')">
-      <strong>${p.code}</strong> — ${p.name}<small>${p.canal}</small></div>`
-  ).join('');
+  const found = PRODUCTS.filter(p => !q || normTxt(p.name).includes(q) || p.code.includes(q));
+  if (!found.length) { res.innerHTML = '<div class="search-item" style="cursor:default;color:var(--text2)">Sin coincidencias</div>'; res.style.display = 'block'; return; }
+  // Agrupado por línea del portafolio L invertida (o canal si no está en el portafolio)
+  const grupo = p => (L_MAP[p.code] ? L_MAP[p.code].linea : p.canal);
+  const orden = [...L_LINEAS, 'Hospitalario', 'Oncología'];
+  const grupos = {};
+  found.forEach(p => (grupos[grupo(p)] = grupos[grupo(p)] || []).push(p));
+  const keys = Object.keys(grupos).sort((a,b) => (orden.indexOf(a) < 0 ? 99 : orden.indexOf(a)) - (orden.indexOf(b) < 0 ? 99 : orden.indexOf(b)) || a.localeCompare(b));
+  res.innerHTML = `<div class="search-group" style="display:flex;justify-content:space-between;background:white;color:var(--text2);text-transform:none;letter-spacing:0">${found.length} producto(s) · toca para agregar<span style="cursor:pointer;color:var(--brand)" onclick="cerrarListaProductos(event)">✕ Cerrar</span></div>` +
+    keys.map(k => `<div class="search-group">${k} (${grupos[k].length})</div>` + grupos[k].sort((a,b) => a.name.localeCompare(b.name)).map(p => {
+      const ya = currentItems.some(i => i.code === p.code);
+      return `<div class="search-item ${ya ? 'added' : ''}" onclick="addProduct('${p.code}','${p.name.replace(/'/g,"\\'")}','${p.canal}')">${ya ? '<span style="float:right;color:var(--green);font-size:11px;font-weight:600">✓ agregado</span>' : ''}<strong>${p.name}</strong><small>${p.code} · ${p.canal}</small></div>`;
+    }).join('')).join('');
   res.style.display = 'block';
 }
+function toggleListaProductos() {
+  const res = document.getElementById('search-results');
+  if (res.style.display === 'block') res.style.display = 'none'; else searchProducts();
+}
+function cerrarListaProductos(e) { if (e) e.stopPropagation(); document.getElementById('search-results').style.display = 'none'; }
 
 function addProduct(code, name, canal) {
   if (currentItems.find(i => i.code === code)) { alert('Este producto ya fue agregado.'); return; }
   currentItems.push({ code, name, canal, qty: '', lote: '', expira: '', l: false });
   renderItems();
-  document.getElementById('prod-search').value = '';
-  document.getElementById('search-results').style.display = 'none';
+  // La lista queda abierta para seguir agregando; si se había escrito un filtro, se limpia
+  const inp = document.getElementById('prod-search');
+  if (inp.value) { inp.value = ''; }
+  searchProducts();
 }
 
 function removeItem(code) {
@@ -1370,7 +1390,8 @@ initCadenas();
 initBarrido();
 initPortafolio();
 document.addEventListener('click', e => {
-  if (!e.target.closest('#prod-search') && !e.target.closest('#search-results'))
+  const path = e.composedPath ? e.composedPath() : [];
+  if (!path.some(el => el && (el.id === 'search-results' || (el.classList && el.classList.contains('search-box')))))
     document.getElementById('search-results').style.display = 'none';
 });
 </script>
